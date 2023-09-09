@@ -23,25 +23,25 @@ GLOBAL_OPCODE_MAP = {
     # Opcode: ['Instruction', 'ModRM?', 'Encoding Type']
     0x01 : ['add ', True, 'mr'], 
     0x03 : ['add ', True, 'rm'],
-    0x05 : ['add eax, ', False, 'i'],
+    0x05 : ['add eax, ', False, 'id'],
     0x09 : ['or ', True, 'mr'],
     0x0B : ['or ', True, 'rm'],
-    0x0d : ['or eax ', False, 'i'],
-    0x0f : [ { 0x84: ['jz ', True, 'cd'], # i 32 bit dist
-               0x85: ['jz ', True, 'cd'], # i 32 bit dist
-               0xAE: [{ 0x7: ['clflush '] }, True, 'm'] }, True, 'hybrid'], # 11 mod is illegal
+    0x0d : ['or eax ', False, 'id'],
+    0x0f : [ { 0x84: ['jz ', False, 'cd'], # i dword 32 byte dist
+               0x85: ['jnz ', False, 'cd'], # i dword 32 byte dist
+               0xAE: [{ 0x7: ['clflush '] }, True, 'm'] }, False, 'mult'], # 11 mod is illegal
     0x21 : ['and ', True, 'mr'],
     0x23 : ['and ', True, 'rm'],
-    0x25 : ['and eax ', False, 'i'],
+    0x25 : ['and eax ', False, 'id'],
     0x29 : ['sub ', True, 'mr'],
     0x2B : ['sub ', True, 'rm'],
-    0x2d : ['sub eax ', False, 'i'],
+    0x2d : ['sub eax ', False, 'id'],
     0x31 : ['xor ', True, 'mr'],
     0x33 : ['xor ', True, 'rm'],
-    0x35 : ['xor eax', False, 'i'],
+    0x35 : ['xor eax', False, 'id'],
     0x39 : ['cmp ', True, 'mr'],
     0x3B : ['cmp ', True, 'rm'],
-    0x3D : ['cmp eax, ', False, 'i'],
+    0x3D : ['cmp eax, ', False, 'id'],
     0x40 : ['inc eax ', False, 'o'],
     0x41 : ['inc ecx ', False, 'o'],
     0x42 : ['inc edx ', False, 'o'],
@@ -74,45 +74,46 @@ GLOBAL_OPCODE_MAP = {
     0x5d : ['pop ebp ', False, 'o'],
     0x5e : ['pop esi ', False, 'o'],
     0x5f : ['pop edi ', False, 'o'],
-    0x68 : ['push ', False, 'i'],
-    0x74 : ['jz ', False, 'cb'], # i 8 bit dist
-    0x75 : ['jnz ', False, 'cd'], # i 32 bit dist
-    0x81 : [ { 0x0: ['add '],
-               0x0: ['or '], 
-               0x4: ['and '],
-               0x5: ['sub '],
-               0x6: ['xor '],
-               0x7: ['cmp ']  }, True, 'mi'],
+    0x68 : ['push ', False, 'id'],
+    0x6A : ['push ', False, 'ib'],
+    0x74 : ['jz ', False, 'cb'], # ib 8 bit dist
+    0x75 : ['jnz ', False, 'cd'], # id 32 bit dist
+    0x81 : [ { 0x0: ['add ', True, 'mid'],
+               0x0: ['or ', True, 'mid'], 
+               0x4: ['and ', True, 'mid'],
+               0x5: ['sub ', True, 'mid'],
+               0x6: ['xor ', True, 'mid'],
+               0x7: ['cmp ', True, 'mid']  }, True, 'mult'],
     0x85 : ['test ', True, 'mr'],
     0x89 : ['mov ', True, 'mr'],
     0x8b : ['mov ', True, 'rm'],
     0x8d : ['lea ', True, 'rm'], # 11 mod is illegal
-    0x8f : [ { 0x0: ['pop '] }, True, 'm'],
+    0x8f : [ { 0x0: ['pop ', True, 'm'] }, True, 'mult'],
     0x90 : ['nop ', False, 'zo'],
-    0xa1 : ['mov eax ', True, 'fd'], # treat as oi 32
+    0xa1 : ['mov eax ', False, 'fd'], # treat as oi 32
     0xa5 : ['movsd ', False, 'zo'], 
-    0xa3 : [['mov ', 'eax '], True, 'td'], # treat as oi 32
-    0xa9 : ['test eax, ', False, 'i'],
-    0xb8 : ['mov eax ', False, 'oi'],
-    0xb9 : ['mov ecx ', False, 'oi'],
-    0xba : ['mov edx ', False, 'oi'],
-    0xbb : ['mov ebx ', False, 'oi'],
-    0xbc : ['mov esp ', False, 'oi'],
-    0xbd : ['mov ebp ', False, 'oi'],
-    0xbe : ['mov esi ', False, 'oi'],
-    0xbf : ['mov edi ', False, 'oi'],
-    0xc2 : ['retn ', False, 'i'],  # i 16
+    0xa3 : [['mov ', 'eax '], False, 'td'], # treat as oi 32
+    0xa9 : ['test eax, ', False, 'id'],
+    0xb8 : ['mov eax ', False, 'oid'],
+    0xb9 : ['mov ecx ', False, 'oid'],
+    0xba : ['mov edx ', False, 'oid'],
+    0xbb : ['mov ebx ', False, 'oid'],
+    0xbc : ['mov esp ', False, 'oid'],
+    0xbd : ['mov ebp ', False, 'oid'],
+    0xbe : ['mov esi ', False, 'oid'],
+    0xbf : ['mov edi ', False, 'oid'],
+    0xc2 : ['retn ', False, 'i16'],  # i 16
     0xc3 : ['retn ', False, 'zo'],
-    0xc7 : [ { 0x0: ['mov '] }, True, 'mi'],
-    0xca : ['retf ', False, 'i'], # i 16
+    0xc7 : [ { 0x0: ['mov ', True, 'mid'] }, True, 'mult'],
+    0xca : ['retf ', False, 'i16'], # i 16
     0xcb : ['retf ', False, 'zo'],
-    0xE8 : ['call ', False, 'cd'], # i 32 bit dist
-    0xE9 : ['jmp ', False, 'cd'], # i 32 bit dist
-    0xEB : ['jmp ', False, 'cb'], # i 8 bit dist
+    0xe8 : ['call ', False, 'cd'], # id 32 byte dist
+    0xe9 : ['jmp ', False, 'cd'], # id 32 byte dist
+    0xeb : ['jmp ', False, 'cb'], # id 8 byte dist
     0xf2 : [ { 0xa7: ['not '] }, False, 'zo'],
-    0xf7 : [ { 0x0: ['test ', True, 'mi'], 
+    0xf7 : [ { 0x0: ['test ', True, 'mid'], 
                0x2: ['not ', True, 'm'], 
-               0x7: ['idiv', True, 'm'] }, True, 'hybrid'], 
+               0x7: ['idiv', True, 'm'] }, True, 'mult'], 
     0xff : [ { 0x1: ['inc '],
                0x1: ['dec '],
                0x2: ['call '],
@@ -121,6 +122,14 @@ GLOBAL_OPCODE_MAP = {
 }
 
 GLOBAL_REGISTER_NAMES = [ 'eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi' ]
+
+class InstructionDefinitonError(Exception):
+    
+    def __init__(self, value):
+        self.value = value
+ 
+    def __str__(self):
+        return(repr(self.value))
 
 def isValidOpcode(opcode):
     if opcode in GLOBAL_OPCODE_MAP.keys():
@@ -164,65 +173,79 @@ def disassemble(b):
         instruction_bytes = "%02x" % b[counter]
         instruction = ''
         orig_index = counter
-        
         counter += 1
 
         # Hint this is here for a reason, but is this the only spot
         # such a check is required in?
-        if counter > len(b):
-           break
+        # if counter > len(b):
+        #    break
 
-        
         if isValidOpcode( opcode ):
             print ('Found valid opcode')
-            if 1:
-                li = GLOBAL_OPCODE_MAP[opcode]
-                print ('Index -> %d' % counter )
+            li = GLOBAL_OPCODE_MAP[opcode]
+            print ('Index -> %d' % orig_index)
 
+            try:
                 if li[1] == True:
                     print ('REQUIRES MODRM BYTE')
+                    if counter >= len(b):
+                        raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
                     modrm = b[counter]
                     instruction_bytes += ' '
                     instruction_bytes += "%02x" % b[counter]
-
                     counter += 1 # we've consumed it now
                     mod,reg,rm = parseMODRM( modrm )
 
-                    if mod == 3:
-                        # Verify if opcode needs additional processing to determine correct instruction
-                        if type(li[0]) is dict:
-                            modifier = li[0][reg]
-                            if modifier:
-                                implemented = True
-                                instruction += modifier
+                    # Verify if opcode needs additional processing to determine correct instruction
+                    if li[2] == 'mult':
+                        if reg in li[0].keys():
+                            li = li[0][reg]
                         else:
-                            implemented = True
-                            instruction += li[0]
+                            raise InstructionDefinitonError("Illegal Opcode register byte")
+                    
+                    implemented = True
+                    instruction += li[0]
 
-                        if not implemented:
-                            break
-                        
+                    if mod == 3:
                         print ('r/m32 operand is direct register')
+
+                        # Check special cases
+                        if "lea" in li[0]:
+                            raise InstructionDefinitonError("Illegal lea instruction addressing mode")
                         
-                        if li[2] == 'mr':
+                        if li[2] == 'mr': # Mem/Reg Reg
                             instruction += GLOBAL_REGISTER_NAMES[rm]
                             instruction += ', '
                             instruction += GLOBAL_REGISTER_NAMES[reg]
-                        elif li[2] == 'rm':
+                        elif li[2] == 'rm': # Reg Mem/Reg
                             instruction += GLOBAL_REGISTER_NAMES[reg]
                             instruction += ', '
                             instruction += GLOBAL_REGISTER_NAMES[rm]
-                        elif li[2] == 'mi':
+                        elif li[2] == 'mib': # Mem/Reg imm8
+                            instruction += GLOBAL_REGISTER_NAMES[rm]
+                            # Save immidiate values in results
+                            if counter >= len(b):
+                                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
+                            instruction += ', 0x'
+                            immidiate = ''
+                            instruction_bytes += "%02x" % b[counter]
+                            immidiate = "%02x" % b[counter] + immidiate 
+                            instruction += immidiate 
+                            counter += 1 # Advance counter by immidiate size
+                        elif li[2] == 'mid': # Mem/Reg imm32
                             instruction += GLOBAL_REGISTER_NAMES[rm]
                             # Save immidiate values in results
                             instruction += ', 0x'
                             immidiate = ''
+                            # Read bytes in little endian
                             for x in range(0, 4):
+                                if counter >= len(b):
+                                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
                                 instruction_bytes += "%02x" % b[counter]
                                 immidiate = "%02x" % b[counter] + immidiate 
+                                counter += 1 # Advance counter by immidiate size
                             instruction += immidiate 
-                            counter += 4 # Advance counter by immidiate size
-                        elif li[2] == 'm':
+                        elif li[2] == 'm': # Mem/Reg
                             instruction += GLOBAL_REGISTER_NAMES[rm]
                     elif mod == 2:
                         #Uncomment next line when you've implemented this 
@@ -252,16 +275,18 @@ def disassemble(b):
                         print ('Adding to list ' + instruction)
                         outputList[ "%08X" % orig_index ] = instruction_bytes + ' ' + instruction
                     else:
-                        outputList[ "%08X" % orig_index ] = '%02x db %02x' % (int(opcode) & 0xff), (int(opcode) & 0xff)
+                        outputList[ "%08X" % orig_index ] = '%02x db %02x' % ((int(opcode) & 0xff), (int(opcode) & 0xff))
                 else:
                     print ('Does not require MODRM - modify to complete the instruction and consume the appropriate bytes')
-            #except:
-            else:
-                outputList[ "%08X" % orig_index ] = 'db %02x' % (int(opcode) & 0xff)
-                i = orig_index
+            except InstructionDefinitonError as err:
+                print(err.value)
+                outputList[ "%08X" % orig_index ] = '%02x db %02x' % ((int(opcode) & 0xff), (int(opcode) & 0xff))
+                i = orig_index + 1
         else:
-            # TOD0: Fix regex
-            outputList[ "%08X" % orig_index ] = '%02x db %02x' % [(int(opcode) & 0xff), (int(opcode) & 0xff)]
+            print ('Invalid opcode')
+            print ('Index -> %d' % orig_index)
+            print ('Byte -> %02x' % opcode)
+            outputList[ "%08X" % orig_index ] = '%02x db %02x' % ((int(opcode) & 0xff), (int(opcode) & 0xff))
 
 
     printDisasm (outputList)
