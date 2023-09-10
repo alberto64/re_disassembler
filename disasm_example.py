@@ -173,7 +173,8 @@ def processMODRM(instruction_bytes, instruction, opcode, li, counter, b):
             raise InstructionDefinitonError("Illegal lea instruction addressing mode")
         if opcode == 0x0f:
             raise InstructionDefinitonError("Illegal clflush instruction addressing mode")      
-        
+        # TODO Implement branch instruction
+
         if li[2] == 'mr': # Mem/Reg Reg
             instruction += GLOBAL_REGISTER_NAMES[rm]
             instruction += ', '
@@ -213,7 +214,8 @@ def processMODRM(instruction_bytes, instruction, opcode, li, counter, b):
     
     # Address is a SIB
     elif rm == 4:
-        print ('Indicates SIB byte required -> please implement')
+        # TODO Implement SIB instructions
+        print ('Indicates SIB byte required')
         raise InstructionDefinitonError("Not implemented")
     
     # Addressing mode is 10
@@ -457,18 +459,21 @@ def processMODRM(instruction_bytes, instruction, opcode, li, counter, b):
                 instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ]'
     return counter, instruction_bytes, instruction
 
-def printDisasm( l ):
-
-    # Good idea to add a "global label" structure...
-    # can check to see if "addr" is in it for a branch reference
+def printDisasm(outputList, labelList):
+    labeladdrs = labelList.keys()
     print("Complete dissasembled binary:\n")
-    for addr in sorted(l):
-        print( '%s: %s' % (addr, l[addr]) )
+    for addr in sorted(outputList):
+        if addr in labeladdrs:
+            print(labelList[addr])
+        print( '%s: %s' % (addr, outputList[addr]) )
 
 def disassemble(b):
 
     # Output list with decoded assembly
     outputList = {}
+
+    # List that will contain generated labels.
+    labelList = {}
 
     # Global byte counter
     counter = 0
@@ -536,17 +541,18 @@ def disassemble(b):
                     
                     # Branch instruction
                     elif li[2] == 'cb':
-                        print('relative offset')
-                        raise InstructionDefinitonError("Not implemented")                       
-                        # instruction += li[0]
-                        # # Save immidiate values in results
-                        # if counter >= len(b):
-                        #     raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                        # instruction += '0x'
-                        # instruction_bytes += "%02x" % b[counter]
-                        # immidiate = "%02x" % b[counter] 
-                        # instruction += immidiate 
-                        # counter += 1 # Advance counter by immidiate size
+                        print('relative 1 byte offset')
+                        instruction += li[0]
+                        # Calculate offset
+                        if counter >= len(b):
+                            raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
+                        # TODO take into account negative numbers
+                        instruction_bytes += "%02x" % b[counter]
+                        counter += 1 # Advance counter by immidiate size
+                        offset = int(int(b[counter], 16)) + counter
+                        label = 'offset_%08x' % (int(offset) & 0xff)
+                        instruction += ' ' + label
+                        labelList[ "%08X" % orig_index ] = label
                     
                     # 2 byte cases
                     elif li[2] == 'i16':  # Branch instructions
@@ -599,19 +605,21 @@ def disassemble(b):
 
                     # Branch instructions
                     elif li[2] == 'cd': 
-                        raise InstructionDefinitonError("Not implemented")
-                        # instruction += li[0]
-                        # # Save immidiate values in results
-                        # instruction += '0x'
-                        # immidiate = ''
-                        # # Read bytes in little endian
-                        # for x in range(0, 4):
-                        #     if counter >= len(b):
-                        #         raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                        #     instruction_bytes += "%02x" % b[counter]
-                        #     immidiate = "%02x" % b[counter] + immidiate 
-                        #     counter += 1 # Advance counter by immidiate size
-                        # instruction += immidiate 
+                        print('relative 4 byte offset')
+                        instruction += li[0]
+                        # Calculate offset
+                        immidiate = ''
+                        for x in range(0, 4):
+                            if counter >= len(b):
+                                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
+                            instruction_bytes += "%02x" % b[counter]
+                            immidiate = "%02x" % b[counter] + immidiate 
+                            counter += 1 # Advance counter by immidiate size
+                        # TODO take into account negative numbers
+                        offset = int(int(immidiate, 16)) + counter
+                        label = 'offset_%08x' % (int(offset) & 0xff)
+                        instruction += ' ' + label
+                        labelList[ "%08X" % orig_index ] = label
 
                     print ('Adding to list ' + instruction)
                     outputList[ "%08X" % orig_index ] = "{:<15} {:<15}".format(instruction_bytes, instruction)
@@ -634,7 +642,7 @@ def disassemble(b):
             instruction = 'db 0x%02x' % (int(opcode) & 0xff)
             outputList[ "%08X" % orig_index ] = "{:<15} {:<15}".format(instruction_bytes, instruction)
 
-    printDisasm (outputList)
+    printDisasm (outputList, labelList)
 
 
 def getfile(filename):	
