@@ -77,7 +77,7 @@ GLOBAL_OPCODE_MAP = {
     0x68 : ['push ', False, 'id'],
     0x6A : ['push ', False, 'ib'], 
     0x74 : ['jz ', False, 'cb'], # ib 8 bit dist
-    0x75 : ['jnz ', False, 'cd'], # id 32 bit dist
+    0x75 : ['jnz ', False, 'cb'], # id 8 bit dist
     0x81 : [ { 0x0: ['add ', True, 'mid'],
                0x1: ['or ', True, 'mid'], 
                0x4: ['and ', True, 'mid'],
@@ -110,7 +110,7 @@ GLOBAL_OPCODE_MAP = {
     0xe8 : ['call ', False, 'cd'], # id 32 byte dist
     0xe9 : ['jmp ', False, 'cd'], # rel 32 byte offset
     0xeb : ['jmp ', False, 'cb'], # rel 8 byte offset
-    0xf2 : [ { 0xa7: ['not ', False, 'zo'] }, False, 'mult'],
+    0xf2 : [ { 0xa7: ['repne cmpsd ', False, 'zo'] }, False, 'mult'],
     0xf7 : [ { 0x0: ['test ', True, 'mid'], 
                0x2: ['not ', True, 'm'], 
                0x7: ['idiv', True, 'm'] }, True, 'mult'], 
@@ -136,6 +136,12 @@ def isValidOpcode(opcode):
         return True
     return False
 
+def parseSIB(sib):
+    #scale = (modrm & 0xC0) >> 6
+    #index = (modrm & 0x38) >> 3
+    #base = (modrm & 0x07)
+    return parseMODRM(sib)
+
 def parseMODRM(modrm):
     #mod = (modrm & 0xC0) >> 6
     #reg = (modrm & 0x38) >> 3
@@ -146,15 +152,47 @@ def parseMODRM(modrm):
     rm  = (modrm & 0b00000111)
     return (mod,reg,rm)
 
-def processMODRM(instruction_bytes, instruction, opcode, li, counter, b):
+def parse8disp(counter, b):
+    if counter >= len(b):
+        raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
+    instruction_bytes = "%02x" % b[counter]
+    # TODO Process 8-BIT signed value
+    immidiate = "%02x" % b[counter] 
+    return instruction_bytes, immidiate, counter + 1
+
+def parse32disp(counter, b):
+    return parseXimm(32, counter, b)
+
+def parse8imm(counter, b):
+    return parseXimm(8, counter, b)
+
+def parse16imm(counter, b):
+    return parseXimm(16, counter, b)
+
+def parse32imm(counter, b):
+    return parseXimm(32, counter, b)
+
+def parseXimm(X, counter, b):
+    immidiate_bytes = ''
+    immidiate = ''
+    byte_count = X // 8
+    for x in range(0, byte_count):
+        if counter >= len(b):
+            raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
+        immidiate_bytes += "%02x" % b[counter]
+        immidiate = "%02x" % b[counter] + immidiate 
+        counter += 1 # Advance counter by immidiate size
+    return immidiate_bytes, immidiate, counter
+
+def processMODRM(opcode, li, counter, b):
 
     # Parse MODRM Byte to get individual bits
     if counter >= len(b):
         raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
     modrm = b[counter]
-    instruction_bytes += "%02x" % b[counter]
+    instruction_bytes = "%02x" % b[counter]
     counter += 1 # we've consumed it now
-    mod,reg,rm = parseMODRM( modrm )
+    mod, reg, rm = parseMODRM( modrm )
 
     # Verify if opcode needs additional processing to determine correct instruction
     if li[2] == 'mult':
@@ -162,7 +200,7 @@ def processMODRM(instruction_bytes, instruction, opcode, li, counter, b):
             li = li[0][reg]
         else:
             raise InstructionDefinitonError("Illegal Opcode operand value.")                    
-    instruction += li[0]
+    instruction = li[0]
 
     # Addressing mode is 11
     if mod == 3:
@@ -173,7 +211,6 @@ def processMODRM(instruction_bytes, instruction, opcode, li, counter, b):
             raise InstructionDefinitonError("Illegal lea instruction addressing mode")
         if opcode == 0x0f:
             raise InstructionDefinitonError("Illegal clflush instruction addressing mode")      
-        # TODO Implement branch instruction
 
         if li[2] == 'mr': # Mem/Reg Reg
             instruction += GLOBAL_REGISTER_NAMES[rm]
@@ -188,272 +225,297 @@ def processMODRM(instruction_bytes, instruction, opcode, li, counter, b):
         elif li[2] == 'mib': # Mem/Reg imm8
             instruction += GLOBAL_REGISTER_NAMES[rm]
             # Save immidiate values in results
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-            instruction += ', 0x'
-            instruction_bytes += "%02x" % b[counter]
-            immidiate = "%02x" % b[counter] 
-            instruction += immidiate 
-            counter += 1 # Advance counter by immidiate size
+            imidiateBytes, immidiate, counter = parse8imm(counter, b)
+            instruction_bytes += imidiateBytes
+            instruction += ', 0x' + immidiate 
 
         elif li[2] == 'mid': # Mem/Reg imm32
             instruction += GLOBAL_REGISTER_NAMES[rm]
             # Save immidiate values in results
-            instruction += ', 0x'
-            immidiate = ''
-            # Read bytes in little endian
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
-            instruction += immidiate 
+            imidiateBytes, immidiate, counter = parse32imm(counter, b)
+            instruction_bytes += imidiateBytes
+            instruction += ', 0x' + immidiate 
+
         elif li[2] == 'm': # Mem/Reg
             instruction += GLOBAL_REGISTER_NAMES[rm]
     
     # Address is a SIB
     elif rm == 4:
-        # TODO Implement SIB instructions
         print ('Indicates SIB byte required')
-        raise InstructionDefinitonError("Not implemented")
+        # Parse SIB Byte to get individual bits
+        if counter >= len(b):
+            raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
+        sib = b[counter]
+        instruction_bytes += "%02x" % b[counter]
+        counter += 1 # we've consumed it now
+        ss, idx, base = parseSIB( sib )  
     
+        # Addressing mode is 10
+        if mod == 2:
+            print ('sib operand is [ reg*ss + base + disp32 ]')
+            dispBytes, disp, counter = parse32disp(counter, b)
+            instruction_bytes += dispBytes
+
+            if li[2] == 'mr': # Mem/Reg Reg
+                # Save immidiate values in results
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                instruction += GLOBAL_REGISTER_NAMES[reg]
+
+            elif li[2] == 'rm': # Reg Mem/Reg
+                instruction += GLOBAL_REGISTER_NAMES[reg]
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+
+            elif li[2] == 'mib': # Mem/Reg imm8
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                
+                # Save immidiate values in results
+                imidiateBytes, immidiate, counter = parse8imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
+
+            elif li[2] == 'mid': # Mem/Reg imm32
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+
+                # Save immidiate values in results
+                imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
+
+            elif li[2] == 'm': # Mem/Reg
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+
+        # Addressing mode is 01
+        elif mod == 1:
+            print ('sib operand is [ reg*ss + base + disp8 ]')
+            dispBytes, disp, counter = parse8disp(counter, b)
+            instruction_bytes += dispBytes
+
+            if li[2] == 'mr': # Mem/Reg Reg
+                # Save immidiate values in results
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                instruction += GLOBAL_REGISTER_NAMES[reg]
+
+            elif li[2] == 'rm': # Reg Mem/Reg
+                instruction += GLOBAL_REGISTER_NAMES[reg]
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+
+            elif li[2] == 'mib': # Mem/Reg imm8
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                
+                # Save immidiate values in results
+                imidiateBytes, immidiate, counter = parse8imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
+
+            elif li[2] == 'mid': # Mem/Reg imm32
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+
+                # Save immidiate values in results
+                imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
+
+            elif li[2] == 'm': # Mem/Reg
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+
+        # Addressing mode is 00
+        else:
+            # No base register
+            if base == 5:
+                print ('sib operand is [ reg*ss + disp32 ]')  
+                dispBytes, disp, counter = parse32disp(counter, b)
+                instruction_bytes += dispBytes
+
+                if li[2] == 'mr': # Mem/Reg Reg
+                    # Save immidiate values in results
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + 0x' + disp + ' ], '
+                    instruction += GLOBAL_REGISTER_NAMES[reg]
+
+                elif li[2] == 'rm': # Reg Mem/Reg
+                    instruction += GLOBAL_REGISTER_NAMES[reg]
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + 0x' + disp + ' ], '
+
+                elif li[2] == 'mib': # Mem/Reg imm8
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + 0x' + disp + ' ], '
+                    
+                    # Save immidiate values in results
+                    imidiateBytes, immidiate, counter = parse8imm(counter, b)
+                    instruction_bytes += imidiateBytes
+                    instruction += ', 0x' + immidiate 
+
+                elif li[2] == 'mid': # Mem/Reg imm32
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + 0x' + disp + ' ], '
+
+                    # Save immidiate values in results
+                    imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                    instruction_bytes += imidiateBytes
+                    instruction += ', 0x' + immidiate 
+
+                elif li[2] == 'm': # Mem/Reg
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + 0x' + disp + ' ], '
+                
+            # No displacement register
+            else:
+                print ('sib operand is [ reg*ss + base ]')
+                if li[2] == 'mr': # Mem/Reg Reg
+                    # Save immidiate values in results
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ], '
+                    instruction += GLOBAL_REGISTER_NAMES[reg]
+
+                elif li[2] == 'rm': # Reg Mem/Reg
+                    instruction += GLOBAL_REGISTER_NAMES[reg]
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ], '
+
+                elif li[2] == 'mib': # Mem/Reg imm8
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ], '
+                    
+                    # Save immidiate values in results
+                    imidiateBytes, immidiate, counter = parse8imm(counter, b)
+                    instruction_bytes += imidiateBytes
+                    instruction += ', 0x' + immidiate 
+
+                elif li[2] == 'mid': # Mem/Reg imm32
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ], '
+
+                    # Save immidiate values in results
+                    imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                    instruction_bytes += imidiateBytes
+                    instruction += ', 0x' + immidiate 
+
+                elif li[2] == 'm': # Mem/Reg
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ], '
+ 
+
+
     # Addressing mode is 10
     elif mod == 2:
-        print ('r/m32 operand is [ reg + disp32 ] -> please implement')
-        # will need to parse the displacement32
+        print ('r/m32 operand is [ reg + disp32 ]')
+        # will need to parse the displacement32 
+        dispBytes, disp, counter = parse32disp(counter, b)
+        instruction_bytes += dispBytes
+
         if li[2] == 'mr': # Mem/Reg Reg
-            immidiate = ''
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + immidiate + ' ]'
-            instruction += ', '
+            # Save immidiate values in results
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ], '
             instruction += GLOBAL_REGISTER_NAMES[reg]
 
         elif li[2] == 'rm': # Reg Mem/Reg
-            immidiate = ''
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
             instruction += GLOBAL_REGISTER_NAMES[reg]
-            instruction += ', '
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + immidiate + ' ]'
+            instruction += ', [ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
 
         elif li[2] == 'mib': # Mem/Reg imm8
-            immidiate = ''
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + immidiate + ' ]'
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
             
             # Save immidiate values in results
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-            instruction += ', 0x'
-            instruction_bytes += "%02x" % b[counter]
-            immidiate = "%02x" % b[counter] 
-            instruction += immidiate 
-            counter += 1 # Advance counter by immidiate size
+            imidiateBytes, immidiate, counter = parse8imm(counter, b)
+            instruction_bytes += imidiateBytes
+            instruction += ', 0x' + immidiate 
 
         elif li[2] == 'mid': # Mem/Reg imm32
-            immidiate = ''
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + immidiate + ' ]'
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
 
             # Save immidiate values in results
-            instruction += ', 0x'
-            immidiate = ''
-            # Read bytes in little endian
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
-            instruction += immidiate 
+            imidiateBytes, immidiate, counter = parse32imm(counter, b)
+            instruction_bytes += imidiateBytes
+            instruction += ', 0x' + immidiate 
 
         elif li[2] == 'm': # Mem/Reg
-            immidiate = ''
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + '0x' + immidiate + ' ]'
-
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + '0x' + disp + ' ]'
     
     # Addressing mode is 01
     elif mod == 1:
-        print ('r/m32 operand is [ reg + disp8 ] -> please implement')
-        # will need to parse the displacement8
+        print ('r/m32 operand is [ reg + disp8 ]')
+        dispBytes, disp, counter = parse8disp(counter, b)
+        instruction_bytes += dispBytes
+
         if li[2] == 'mr': # Mem/Reg Reg
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-            instruction_bytes += "%02x" % b[counter]
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + " + 0x%02x" % b[counter] + ' ]'
-            instruction += ', '
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ], '
             instruction += GLOBAL_REGISTER_NAMES[reg]
-            counter += 1 # Advance counter by immidiate size
 
         elif li[2] == 'rm': # Reg Mem/Reg
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-            instruction_bytes += "%02x" % b[counter]
             instruction += GLOBAL_REGISTER_NAMES[reg]
-            instruction += ', '
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + " + 0x%02x" % b[counter] + ' ]'
-            counter += 1 # Advance counter by immidiate size
+            instruction += ', [ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
 
         elif li[2] == 'mib': # Mem/Reg imm8
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-            instruction_bytes += "%02x" % b[counter]
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + " + 0x%02x" % b[counter] + ' ]'
-            counter += 1 # Advance counter by immidiate size
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
             
             # Save immidiate values in results
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-
-            instruction += ', 0x'
-            instruction_bytes += "%02x" % b[counter]
-            immidiate = "%02x" % b[counter] 
-            instruction += immidiate 
-            counter += 1 # Advance counter by immidiate size
+            imidiateBytes, immidiate, counter = parse8imm(counter, b)
+            instruction_bytes += imidiateBytes
+            instruction += ', 0x' + immidiate 
 
         elif li[2] == 'mid': # Mem/Reg imm32
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-            instruction_bytes += "%02x" % b[counter]
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + " + 0x%02x" % b[counter] + ' ]'
-            counter += 1 # Advance counter by immidiate size
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
 
             # Save immidiate values in results
-            instruction += ', 0x'
-            immidiate = ''
-            # Read bytes in little endian
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
-            instruction += immidiate 
+            imidiateBytes, immidiate, counter = parse32imm(counter, b)
+            instruction_bytes += imidiateBytes
+            instruction += ', 0x' + immidiate 
 
         elif li[2] == 'm': # Mem/Reg
-            if counter >= len(b):
-                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-            instruction_bytes += "%02x" % b[counter]
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + " + 0x%02x" % b[counter] + ' ]'
-            counter += 1 # Advance counter by immidiate size    
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'  
     
     # Addressing mode is 00
     else:
         # Address is a displacement32
         if rm == 5:
-            print ('r/m32 operand is [disp32] -> please implement')
-            immidiate = ''
-            # Read bytes in little endian
-            for x in range(0, 4):
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] + immidiate 
-                counter += 1 # Advance counter by immidiate size
+            print ('r/m32 operand is [disp32]')
+            dispBytes, disp, counter = parse32disp(counter, b)
+            instruction_bytes += dispBytes
             if li[2] == 'mr': # Mem/Reg Reg
-                instruction += '[ 0x' + immidiate + ' ]'
+                instruction += '[ 0x' + disp + ' ]'
                 instruction += ', '
                 instruction += GLOBAL_REGISTER_NAMES[reg]
 
             elif li[2] == 'rm': # Reg Mem/Reg
                 instruction += GLOBAL_REGISTER_NAMES[reg]
                 instruction += ', '
-                instruction += '[ 0x' + immidiate + ' ]'
+                instruction += '[ 0x' + disp + ' ]'
 
             elif li[2] == 'mib': # Mem/Reg imm8
-                instruction += '[ 0x' + immidiate + ' ]'
+                instruction += '[ 0x' + disp + ' ]'
                 
                 # Save immidiate values in results
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction += ', 0x'
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] 
-                instruction += immidiate 
-                counter += 1 # Advance counter by immidiate size
+                imidiateBytes, immidiate, counter = parse8imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
                 
             elif li[2] == 'mid': # Mem/Reg imm32
-                instruction += '[ 0x' + immidiate + ' ]'
+                instruction += '[ 0x' + disp + ' ]'
 
                 # Save immidiate values in results
-                instruction += ', 0x'
-                immidiate = ''
-                # Read bytes in little endian
-                for x in range(0, 4):
-                    if counter >= len(b):
-                        raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                    instruction_bytes += "%02x" % b[counter]
-                    immidiate = "%02x" % b[counter] + immidiate 
-                    counter += 1 # Advance counter by immidiate size
-                instruction += immidiate 
+                imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
 
             elif li[2] == 'm': # Mem/Reg
-                instruction += '[ 0x' + immidiate + ' ]'
+                instruction += '[ 0x' + disp + ' ]'
         # Address is memory
         else:
             print ('r/m32 operand is [reg] -> please implement')
             if li[2] == 'mr': # Mem/Reg Reg
-                instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ]'
-                instruction += ', '
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ], '
                 instruction += GLOBAL_REGISTER_NAMES[reg]
 
             elif li[2] == 'rm': # Reg Mem/Reg
                 instruction += GLOBAL_REGISTER_NAMES[reg]
-                instruction += ', '
-                instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ]'
+                instruction += ', [ ' + GLOBAL_REGISTER_NAMES[rm] + ' ]'
 
             elif li[2] == 'mib': # Mem/Reg imm8
                 instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ]'
                 
                 # Save immidiate values in results
-                if counter >= len(b):
-                    raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                instruction += ', 0x'
-                instruction_bytes += "%02x" % b[counter]
-                immidiate = "%02x" % b[counter] 
-                instruction += immidiate 
-                counter += 1 # Advance counter by immidiate size
+                imidiateBytes, immidiate, counter = parse8imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
                 
             elif li[2] == 'mid': # Mem/Reg imm32
                 instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ]'
 
                 # Save immidiate values in results
-                instruction += ', 0x'
-                immidiate = ''
-                # Read bytes in little endian
-                for x in range(0, 4):
-                    if counter >= len(b):
-                        raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                    instruction_bytes += "%02x" % b[counter]
-                    immidiate = "%02x" % b[counter] + immidiate 
-                    counter += 1 # Advance counter by immidiate size
-                instruction += immidiate 
+                imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                instruction_bytes += imidiateBytes
+                instruction += ', 0x' + immidiate 
 
             elif li[2] == 'm': # Mem/Reg
                 instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ]'
@@ -491,15 +553,17 @@ def disassemble(b):
         if isValidOpcode( opcode ):
             print ('Found valid opcode')
             li = GLOBAL_OPCODE_MAP[opcode]
-            print ('Index -> %d' % orig_index)
+            print ("Index -> %08X" % orig_index)
 
             try:
                 # Requires MODRM processing
                 if li[1] == True:
                     print ('REQUIRES MODRM BYTE')
-                    counter, instruction_bytes, instruction = processMODRM(instruction_bytes, instruction, opcode, li, counter, b)
-                    print ('Adding to list ' + instruction)
-                    outputList[ "%08X" % orig_index ] = "{:<15} {:<15}".format(instruction_bytes, instruction)
+                    counter, modrm_bytes, modrm = processMODRM(opcode, li, counter, b)
+                    instruction_bytes += modrm_bytes
+                    instruction += modrm
+                    print ('Adding to list: ' + instruction)
+                    outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
                 
                 # Doesn't require MODRM processing to get correct instruction 
                 else:
@@ -523,124 +587,98 @@ def disassemble(b):
                     
                     # Special case that requires a MODRM operation to finish
                     elif li[2] == 'mult':
-                        print ('REQUIRES MODRM BYTE')
-                        counter, instruction_bytes, instruction = processMODRM(instruction_bytes, instruction, opcode, li, counter, b)
-                    
+                        print ('REQUIRES MODRM BYTE for completion')
+                        counter, modrm_bytes, modrm = processMODRM(opcode, li, counter, b)
+                        instruction_bytes += modrm_bytes
+                        instruction += modrm                    
                     # 1 byte cases
-                    elif li[2] == 'ib':
+                    elif li[2] == 'ib': # imm8
                         instruction += li[0]
                         
                         # Save immidiate values in results
-                        if counter >= len(b):
-                            raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                        instruction += ', 0x'
-                        instruction_bytes += "%02x" % b[counter]
-                        immidiate = "%02x" % b[counter] 
-                        instruction += immidiate 
-                        counter += 1 # Advance counter by immidiate size
-                    
-                    # Branch instruction
-                    elif li[2] == 'cb':
-                        print('relative 1 byte offset')
+                        imidiateBytes, immidiate, counter = parse8imm(counter, b)
+                        instruction_bytes += imidiateBytes
+                        instruction += '0x' + immidiate 
+
+                    elif li[2] == 'cb': # Branch instruction
                         instruction += li[0]
+
                         # Calculate offset
-                        if counter >= len(b):
-                            raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                        # TODO take into account negative numbers
-                        instruction_bytes += "%02x" % b[counter]
-                        counter += 1 # Advance counter by immidiate size
-                        offset = int(int(b[counter], 16)) + counter
-                        label = 'offset_%08x' % (int(offset) & 0xff)
-                        instruction += ' ' + label
-                        labelList[ "%08X" % orig_index ] = label
+                        # TODO take into account negative values
+                        dispBytes, disp, counter = parse8disp(counter, b)
+                        instruction_bytes += dispBytes
+                        offset = int(int(disp, 16)) + counter
+                        label = 'offset_%08xh' % (int(offset) & 0xff)
+                        instruction += label
+                        labelList[ "%08X" % (int(offset) & 0xff) ] = label + ':'
                     
                     # 2 byte cases
-                    elif li[2] == 'i16':  # Branch instructions
+                    elif li[2] == 'i16':  # imm16
                         instruction += li[0]
 
                         # Save immidiate values in results
-                        instruction += ', 0x'
-                        immidiate = ''
+                        imidiateBytes, immidiate, counter = parse16imm(counter, b)
+                        instruction_bytes += imidiateBytes
+                        instruction += '0x' + immidiate 
 
-                        # Read bytes in little endian
-                        for x in range(0, 2):
-                            if counter >= len(b):
-                                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                            instruction_bytes += "%02x" % b[counter]
-                            immidiate = "%02x" % b[counter] + immidiate 
-                            counter += 1 # Advance counter by immidiate size
-                        instruction += immidiate                     
                     # 4 byte cases
-                    elif li[2] == 'id' or li[2] == 'fd' or li[2] == 'oid':
+                    elif li[2] == 'id' or li[2] == 'oid': # imm32
                         instruction += li[0]
 
                         # Save immidiate values in results
-                        instruction += ', 0x'
-                        immidiate = ''
+                        imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                        instruction_bytes += imidiateBytes
+                        instruction += '0x' + immidiate 
 
-                        # Read bytes in little endian
-                        for x in range(0, 4):
-                            if counter >= len(b):
-                                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                            instruction_bytes += "%02x" % b[counter]
-                            immidiate = "%02x" % b[counter] + immidiate 
-                            counter += 1 # Advance counter by immidiate size
-                        instruction += immidiate 
-                    elif li[2] == 'td':
+                    elif li[2] == 'fd': # r32, imm32
+                        instruction += li[0]
+
+                        # Save immidiate values in results
+                        imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                        instruction_bytes += imidiateBytes
+                        instruction += ', 0x' + immidiate 
+
+                    elif li[2] == 'td': # imm32, r32
                         instruction += li[0][0]
 
                         # Save immidiate values in results
-                        instruction += ', 0x'
-                        immidiate = ''
-
-                        # Read bytes in little endian
-                        for x in range(0, 4):
-                            if counter >= len(b):
-                                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                            instruction_bytes += "%02x" % b[counter]
-                            immidiate = "%02x" % b[counter] + immidiate 
-                            counter += 1 # Advance counter by immidiate size
-                        instruction += immidiate
-                        instruction += li[0][1]
+                        imidiateBytes, immidiate, counter = parse16imm(counter, b)
+                        instruction_bytes += imidiateBytes
+                        instruction += '0x' + immidiate 
+                        
+                        instruction += ', ' + li[0][1]
 
                     # Branch instructions
                     elif li[2] == 'cd': 
-                        print('relative 4 byte offset')
                         instruction += li[0]
-                        # Calculate offset
-                        immidiate = ''
-                        for x in range(0, 4):
-                            if counter >= len(b):
-                                raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
-                            instruction_bytes += "%02x" % b[counter]
-                            immidiate = "%02x" % b[counter] + immidiate 
-                            counter += 1 # Advance counter by immidiate size
-                        # TODO take into account negative numbers
-                        offset = int(int(immidiate, 16)) + counter
-                        label = 'offset_%08x' % (int(offset) & 0xff)
-                        instruction += ' ' + label
-                        labelList[ "%08X" % orig_index ] = label
 
-                    print ('Adding to list ' + instruction)
-                    outputList[ "%08X" % orig_index ] = "{:<15} {:<15}".format(instruction_bytes, instruction)
+                        # Calculate offset
+                        imidiateBytes, immidiate, counter = parse32imm(counter, b)
+                        instruction_bytes += imidiateBytes
+                        offset = int(int(immidiate, 16)) + counter
+                        label = 'offset_%08xh' % (int(offset) & 0xff)
+                        instruction += label
+                        labelList[ "%08X" % (int(offset) & 0xff) ] = label  + ':'
+
+                    print ('Adding to list: ' + instruction)
+                    outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
             
             # Was unable to fully process an instruction
             except InstructionDefinitonError as err:
                 print(err.value)
                 instruction_bytes = '%02x' % (int(opcode) & 0xff)
                 instruction = 'db 0x%02x' % (int(opcode) & 0xff)
-                outputList[ "%08X" % orig_index ] = "{:<15} {:<15}".format(instruction_bytes, instruction)
+                outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
                 counter = orig_index + 1
                 continue
 
         # Invalid opcode
         else:
             print ('Invalid opcode')
-            print ('Index -> %d' % orig_index)
-            print ('Byte -> %02x' % opcode)
+            print ("Index -> %08X" % orig_index)
             instruction_bytes = '%02x' % (int(opcode) & 0xff)
             instruction = 'db 0x%02x' % (int(opcode) & 0xff)
-            outputList[ "%08X" % orig_index ] = "{:<15} {:<15}".format(instruction_bytes, instruction)
+            outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
 
     printDisasm (outputList, labelList)
 
@@ -651,7 +689,6 @@ def getfile(filename):
     return a		
 
 def main():
-    import sys 
     import argparse 
 
     parser = argparse.ArgumentParser()
