@@ -714,7 +714,7 @@ def disassemble(b):
                     instruction_bytes += modrm_bytes
                     instruction += modrm
                     print ('Adding to list: ' + instruction)
-                    outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
+                    outputList[ "%08X" % orig_index ] = "{:<24} {:<24}".format(instruction_bytes, instruction)
                 
                 # Doesn't require MODRM processing to get correct instruction 
                 else:
@@ -815,14 +815,14 @@ def disassemble(b):
                         labelList[ "%08X" % (int(offset) & 0xff) ] = label  + ':'
 
                     print ('Adding to list: ' + instruction)
-                    outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
+                    outputList[ "%08X" % orig_index ] = "{:<24} {:<24}".format(instruction_bytes, instruction)
             
             # Was unable to fully process an instruction
             except InstructionDefinitonError as err:
                 print(err.value)
                 instruction_bytes = '%02x' % (int(opcode) & 0xff)
                 instruction = 'db 0x%02x' % (int(opcode) & 0xff)
-                outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
+                outputList[ "%08X" % orig_index ] = "{:<24} {:<24}".format(instruction_bytes, instruction)
                 counter = orig_index + 1
                 continue
 
@@ -832,7 +832,7 @@ def disassemble(b):
             print ("Index -> %08X" % orig_index)
             instruction_bytes = '%02x' % (int(opcode) & 0xff)
             instruction = 'db 0x%02x' % (int(opcode) & 0xff)
-            outputList[ "%08X" % orig_index ] = "{:<16} {:<16}".format(instruction_bytes, instruction)
+            outputList[ "%08X" % orig_index ] = "{:<24} {:<24}".format(instruction_bytes, instruction)
 
     printDisasm (outputList, labelList)
 
