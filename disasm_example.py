@@ -155,10 +155,16 @@ def parseMODRM(modrm):
 def parse8disp(counter, b):
     if counter >= len(b):
         raise InstructionDefinitonError("Ran out of bytes to continue opcode instruction")
+    neg = False
     instruction_bytes = "%02x" % b[counter]
-    # TODO Process 8-BIT signed value
     immidiate = "%02x" % b[counter] 
-    return instruction_bytes, immidiate, counter + 1
+    sign_bit = int(immidiate, 16) & 0x80
+    if sign_bit == 0x80:
+        neg = True
+        immidiate = "FFFFFF" + immidiate
+        twos_comp = (int(immidiate, 16) ^ 0xFFFFFFFF) + 0x1
+        immidiate = "%02x" % twos_comp
+    return instruction_bytes, immidiate, counter + 1, neg
 
 def parse32disp(counter, b):
     return parseXimm(32, counter, b)
@@ -289,20 +295,24 @@ def processMODRM(opcode, li, counter, b):
             # Addressing mode is 01
             elif mod == 1:
                 print ('sib operand is [ base + disp8 ]')
-                dispBytes, disp, counter = parse8disp(counter, b)
+                dispBytes, disp, counter, neg = parse8disp(counter, b)
                 instruction_bytes += dispBytes
+                if neg:
+                    sign = '-'
+                else:
+                    sign = '+'
 
                 if li[2] == 'mr': # Mem/Reg Reg
                     # Save immidiate values in results
-                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
                     instruction += GLOBAL_REGISTER_NAMES[reg]
 
                 elif li[2] == 'rm': # Reg Mem/Reg
                     instruction += GLOBAL_REGISTER_NAMES[reg]
-                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
 
                 elif li[2] == 'mib': # Mem/Reg imm8
-                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
                     
                     # Save immidiate values in results
                     imidiateBytes, immidiate, counter = parse8imm(counter, b)
@@ -310,7 +320,7 @@ def processMODRM(opcode, li, counter, b):
                     instruction += ', 0x' + immidiate 
 
                 elif li[2] == 'mid': # Mem/Reg imm32
-                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
 
                     # Save immidiate values in results
                     imidiateBytes, immidiate, counter = parse32imm(counter, b)
@@ -318,7 +328,7 @@ def processMODRM(opcode, li, counter, b):
                     instruction += ', 0x' + immidiate 
 
                 elif li[2] == 'm': # Mem/Reg
-                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                    instruction += '[ ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
 
             # Addressing mode is 00
             else:
@@ -423,20 +433,24 @@ def processMODRM(opcode, li, counter, b):
         # Addressing mode is 01
         elif mod == 1:
             print ('sib operand is [ reg*ss + base + disp8 ]')
-            dispBytes, disp, counter = parse8disp(counter, b)
+            dispBytes, disp, counter, neg = parse8disp(counter, b)
             instruction_bytes += dispBytes
+            if neg:
+                sign = '-'
+            else:
+                sign = '+'
 
             if li[2] == 'mr': # Mem/Reg Reg
                 # Save immidiate values in results
-                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
                 instruction += GLOBAL_REGISTER_NAMES[reg]
 
             elif li[2] == 'rm': # Reg Mem/Reg
                 instruction += GLOBAL_REGISTER_NAMES[reg]
-                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
 
             elif li[2] == 'mib': # Mem/Reg imm8
-                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
                 
                 # Save immidiate values in results
                 imidiateBytes, immidiate, counter = parse8imm(counter, b)
@@ -444,7 +458,7 @@ def processMODRM(opcode, li, counter, b):
                 instruction += ', 0x' + immidiate 
 
             elif li[2] == 'mid': # Mem/Reg imm32
-                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
 
                 # Save immidiate values in results
                 imidiateBytes, immidiate, counter = parse32imm(counter, b)
@@ -452,7 +466,7 @@ def processMODRM(opcode, li, counter, b):
                 instruction += ', 0x' + immidiate 
 
             elif li[2] == 'm': # Mem/Reg
-                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' + 0x' + disp + ' ], '
+                instruction += '[ ' + GLOBAL_REGISTER_NAMES[idx] + '*' + str(2**ss) + ' + ' + GLOBAL_REGISTER_NAMES[base] + ' ' + sign + ' 0x' + disp + ' ], '
 
         # Addressing mode is 00
         else:
@@ -559,19 +573,22 @@ def processMODRM(opcode, li, counter, b):
     # Addressing mode is 01
     elif mod == 1:
         print ('r/m32 operand is [ reg + disp8 ]')
-        dispBytes, disp, counter = parse8disp(counter, b)
+        dispBytes, disp, counter, neg = parse8disp(counter, b)
         instruction_bytes += dispBytes
-
+        if neg:
+            sign = '-'
+        else:
+            sign = '+'
         if li[2] == 'mr': # Mem/Reg Reg
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ], '
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ' + sign + ' 0x' + disp + ' ], '
             instruction += GLOBAL_REGISTER_NAMES[reg]
 
         elif li[2] == 'rm': # Reg Mem/Reg
             instruction += GLOBAL_REGISTER_NAMES[reg]
-            instruction += ', [ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
+            instruction += ', [ ' + GLOBAL_REGISTER_NAMES[rm] + ' ' + sign + ' 0x' + disp + ' ]'
 
         elif li[2] == 'mib': # Mem/Reg imm8
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ' + sign + ' 0x' + disp + ' ]'
             
             # Save immidiate values in results
             imidiateBytes, immidiate, counter = parse8imm(counter, b)
@@ -579,7 +596,7 @@ def processMODRM(opcode, li, counter, b):
             instruction += ', 0x' + immidiate 
 
         elif li[2] == 'mid': # Mem/Reg imm32
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ' + sign + ' 0x' + disp + ' ]'
 
             # Save immidiate values in results
             imidiateBytes, immidiate, counter = parse32imm(counter, b)
@@ -587,7 +604,7 @@ def processMODRM(opcode, li, counter, b):
             instruction += ', 0x' + immidiate 
 
         elif li[2] == 'm': # Mem/Reg
-            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' + 0x' + disp + ' ]'  
+            instruction += '[ ' + GLOBAL_REGISTER_NAMES[rm] + ' ' + sign + ' 0x' + disp + ' ]'  
     
     # Addressing mode is 00
     else:
@@ -738,10 +755,13 @@ def disassemble(b):
                         instruction += li[0]
 
                         # Calculate offset
-                        # TODO take into account negative values
-                        dispBytes, disp, counter = parse8disp(counter, b)
+                        dispBytes, disp, counter, neg = parse8disp(counter, b)
                         instruction_bytes += dispBytes
-                        offset = int(int(disp, 16)) + counter
+                        if neg:
+                            offset = counter - int(int(disp, 16))
+                        else:
+                            offset = counter + int(int(disp, 16))
+
                         label = 'offset_%08xh' % (int(offset) & 0xff)
                         instruction += label
                         labelList[ "%08X" % (int(offset) & 0xff) ] = label + ':'
